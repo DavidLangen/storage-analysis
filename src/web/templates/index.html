@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Storage Analysis</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d2e;
+      --surface2: #252840;
+      --border: #2e3150;
+      --text: #e2e8f0;
+      --text-muted: #8892a4;
+      --accent-blue: #4f8ef7;
+      --accent-green: #34d399;
+      --accent-orange: #fb923c;
+      --accent-red: #f87171;
+      --accent-purple: #a78bfa;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header h1 span { color: var(--accent-blue); }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .range-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 0.35rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.15s;
+    }
+    .range-btn.active, .range-btn:hover {
+      background: var(--accent-blue);
+      border-color: var(--accent-blue);
+      color: #fff;
+    }
+
+    .refresh-indicator {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .collect-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.35rem 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.15s;
+    }
+    .collect-btn:hover { border-color: var(--accent-green); color: var(--accent-green); }
+
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 1.5rem 2rem;
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    /* Stat cards */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+    }
+
+    .stat-card .label {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.4rem;
+    }
+
+    .stat-card .value {
+      font-size: 1.75rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-card .sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.3rem;
+    }
+
+    .color-blue  { color: var(--accent-blue); }
+    .color-green { color: var(--accent-green); }
+    .color-orange{ color: var(--accent-orange); }
+    .color-red   { color: var(--accent-red); }
+
+    /* Charts */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(560px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text);
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 260px;
+    }
+
+    /* Threshold table */
+    .threshold-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .threshold-table th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .threshold-table td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .threshold-table tr:last-child td { border-bottom: none; }
+    .threshold-table tr:hover td { background: var(--surface2); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .badge-green { background: rgba(52,211,153,0.15); color: var(--accent-green); }
+    .badge-red   { background: rgba(248,113,113,0.15); color: var(--accent-red); }
+    .badge-orange{ background: rgba(251,146,60,0.15); color: var(--accent-orange); }
+
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .dot-green  { background: var(--accent-green); }
+    .dot-red    { background: var(--accent-red); }
+    .dot-orange { background: var(--accent-orange); }
+
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 3rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    .progress-bar-wrap {
+      background: var(--surface2);
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+      margin-top: 0.4rem;
+    }
+    .progress-bar {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+    .bar-blue   { background: var(--accent-blue); }
+    .bar-orange { background: var(--accent-orange); }
+    .bar-green  { background: var(--accent-green); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Storage <span>Analysis</span></h1>
+  <div class="controls">
+    <button class="range-btn active" data-days="7">7T</button>
+    <button class="range-btn" data-days="30">30T</button>
+    <button class="range-btn" data-days="90">90T</button>
+    <button class="collect-btn" id="collectBtn">▶ Jetzt sammeln</button>
+    <span class="refresh-indicator" id="refreshIndicator">–</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Combined stats -->
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card">
+      <div class="label">Gesamt-Kapazität</div>
+      <div class="value color-blue" id="statTotal">–</div>
+      <div class="sub">Hetzner + TrueNAS</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Belegt</div>
+      <div class="value color-orange" id="statUsed">–</div>
+      <div class="sub" id="statUsedPct">–</div>
+      <div class="progress-bar-wrap"><div class="progress-bar bar-orange" id="barUsed" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Frei</div>
+      <div class="value color-green" id="statFree">–</div>
+      <div class="sub" id="statFreePct">–</div>
+      <div class="progress-bar-wrap"><div class="progress-bar bar-green" id="barFree" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Hetzner belegt</div>
+      <div class="value color-blue" id="statHetzner">–</div>
+      <div class="sub" id="statHetznerPct">–</div>
+      <div class="progress-bar-wrap"><div class="progress-bar bar-blue" id="barHetzner" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">TrueNAS belegt</div>
+      <div class="value color-purple" id="statTruenas" style="color:var(--accent-purple)">–</div>
+      <div class="sub" id="statTruenasPct">–</div>
+      <div class="progress-bar-wrap"><div class="progress-bar" id="barTruenas" style="width:0%;background:var(--accent-purple)"></div></div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-title">TrueNAS — Verlauf</div>
+      <div class="chart-wrap"><canvas id="truenasChart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Hetzner Storagebox — Verlauf</div>
+      <div class="chart-wrap"><canvas id="hetznerChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Downscale thresholds -->
+  <div class="card">
+    <div class="card-title">Hetzner Downscale-Thresholds</div>
+    <div id="thresholdContent">
+      <div class="empty-state">Lade Daten…</div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const fmt = (bytes) => {
+  if (bytes === null || bytes === undefined) return '–';
+  const tb = bytes / 1e12;
+  if (tb >= 1) return tb.toFixed(2) + ' TB';
+  const gb = bytes / 1e9;
+  if (gb >= 1) return gb.toFixed(1) + ' GB';
+  const mb = bytes / 1e6;
+  return mb.toFixed(0) + ' MB';
+};
+
+const pct = (used, total) => total > 0 ? ((used / total) * 100).toFixed(1) + '%' : '–';
+
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { labels: { color: '#8892a4', boxWidth: 12, padding: 16 } },
+    tooltip: {
+      backgroundColor: '#1a1d2e',
+      borderColor: '#2e3150',
+      borderWidth: 1,
+      titleColor: '#e2e8f0',
+      bodyColor: '#8892a4',
+      callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
+    }
+  },
+  scales: {
+    x: {
+      type: 'time',
+      time: { tooltipFormat: 'dd.MM.yy HH:mm' },
+      grid: { color: '#2e3150' },
+      ticks: { color: '#8892a4' }
+    },
+    y: {
+      grid: { color: '#2e3150' },
+      ticks: { color: '#8892a4', callback: v => fmt(v) }
+    }
+  }
+};
+
+let truenasChart, hetznerChart;
+let currentDays = 7;
+
+function initCharts() {
+  truenasChart = new Chart(document.getElementById('truenasChart'), {
+    type: 'line',
+    data: { datasets: [] },
+    options: JSON.parse(JSON.stringify(CHART_DEFAULTS))
+  });
+  hetznerChart = new Chart(document.getElementById('hetznerChart'), {
+    type: 'line',
+    data: { datasets: [] },
+    options: JSON.parse(JSON.stringify(CHART_DEFAULTS))
+  });
+}
+
+function parseTS(ts) {
+  // normalize ISO strings from SQLite (may lack timezone suffix)
+  if (ts && !ts.endsWith('Z') && !ts.includes('+')) ts += 'Z';
+  return new Date(ts);
+}
+
+async function loadTruenas() {
+  const names = await fetch('/api/truenas/pools').then(r => r.json());
+  if (!names.length) {
+    truenasChart.data.datasets = [];
+    truenasChart.update();
+    return;
+  }
+
+  const colors = ['#a78bfa', '#34d399', '#4f8ef7', '#fb923c'];
+  const datasets = [];
+
+  await Promise.all(names.map(async (name, i) => {
+    const data = await fetch(`/api/truenas/history?pool=${encodeURIComponent(name)}&days=${currentDays}`).then(r => r.json());
+    const color = colors[i % colors.length];
+    datasets.push(
+      {
+        label: `${name} belegt`,
+        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.allocated })),
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+      },
+      {
+        label: `${name} frei`,
+        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.free })),
+        borderColor: '#34d399',
+        backgroundColor: '#34d39922',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+        borderDash: [4, 3],
+      }
+    );
+  }));
+
+  truenasChart.data.datasets = datasets;
+  truenasChart.update();
+}
+
+async function loadHetzner() {
+  const ids = await fetch('/api/hetzner/ids').then(r => r.json());
+  if (!ids.length) {
+    hetznerChart.data.datasets = [];
+    hetznerChart.update();
+    return;
+  }
+
+  const colors = ['#4f8ef7', '#fb923c', '#f87171', '#fbbf24'];
+  const datasets = [];
+
+  await Promise.all(ids.map(async (id, i) => {
+    const data = await fetch(`/api/hetzner/history?storagebox_id=${id}&days=${currentDays}`).then(r => r.json());
+    if (!data.length) return;
+    const color = colors[i % colors.length];
+    const name = data[0].name || `Box ${id}`;
+    datasets.push(
+      {
+        label: `${name} belegt`,
+        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_usage })),
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 2,
+      },
+      {
+        label: `${name} Kontingent`,
+        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_quota })),
+        borderColor: color,
+        backgroundColor: 'transparent',
+        borderDash: [6, 3],
+        fill: false,
+        tension: 0,
+        pointRadius: 0,
+      }
+    );
+  }));
+
+  hetznerChart.data.datasets = datasets;
+  hetznerChart.update();
+}
+
+async function loadCombined() {
+  const data = await fetch('/api/combined').then(r => r.json());
+
+  document.getElementById('statTotal').textContent = fmt(data.total_quota_bytes);
+  document.getElementById('statUsed').textContent = fmt(data.total_used_bytes);
+  document.getElementById('statUsedPct').textContent = pct(data.total_used_bytes, data.total_quota_bytes) + ' belegt';
+  document.getElementById('statFree').textContent = fmt(data.total_free_bytes);
+  document.getElementById('statFreePct').textContent = pct(data.total_free_bytes, data.total_quota_bytes) + ' frei';
+
+  const usedPct = data.total_quota_bytes > 0 ? (data.total_used_bytes / data.total_quota_bytes * 100) : 0;
+  const freePct = 100 - usedPct;
+  document.getElementById('barUsed').style.width = usedPct + '%';
+  document.getElementById('barFree').style.width = freePct + '%';
+
+  const hetznerUsed = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_usage, 0);
+  const hetznerQuota = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_quota, 0);
+  document.getElementById('statHetzner').textContent = fmt(hetznerUsed);
+  document.getElementById('statHetznerPct').textContent = pct(hetznerUsed, hetznerQuota) + ' von ' + fmt(hetznerQuota);
+  document.getElementById('barHetzner').style.width = (hetznerQuota > 0 ? hetznerUsed / hetznerQuota * 100 : 0) + '%';
+
+  const tnAlloc = data.truenas_pools.reduce((s, p) => s + p.allocated, 0);
+  const tnSize = data.truenas_pools.reduce((s, p) => s + p.size, 0);
+  document.getElementById('statTruenas').textContent = fmt(tnAlloc);
+  document.getElementById('statTruenasPct').textContent = pct(tnAlloc, tnSize) + ' von ' + fmt(tnSize);
+  document.getElementById('barTruenas').style.width = (tnSize > 0 ? tnAlloc / tnSize * 100 : 0) + '%';
+
+  renderThresholds(data.downscale_thresholds);
+}
+
+function renderThresholds(thresholds) {
+  const el = document.getElementById('thresholdContent');
+  if (!thresholds.length) {
+    el.innerHTML = '<div class="empty-state">Keine Daten vorhanden. Bitte erst Daten sammeln.</div>';
+    return;
+  }
+
+  const rows = thresholds.map(t => {
+    let statusBadge;
+    if (!t.next_smaller_product) {
+      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>Kleinster Plan</span>';
+    } else if (t.can_downscale && t.threshold_met) {
+      statusBadge = '<span class="badge badge-green"><span class="dot dot-green"></span>Downscale möglich</span>';
+    } else if (!t.can_downscale && t.threshold_met) {
+      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>TrueNAS hat Platz</span>';
+    } else {
+      statusBadge = '<span class="badge badge-red"><span class="dot dot-red"></span>Kein Downscale</span>';
+    }
+
+    const nextPlan = t.next_smaller_product
+      ? `${t.next_smaller_product} (${fmt(t.next_smaller_quota_bytes)})`
+      : '–';
+
+    return `
+      <tr>
+        <td><strong>${t.storagebox_name}</strong><br><span style="color:var(--text-muted);font-size:0.8rem">ID ${t.storagebox_id}</span></td>
+        <td>${t.current_product} <span style="color:var(--text-muted)">(${fmt(t.current_quota_bytes)})</span></td>
+        <td>${fmt(t.disk_used_bytes)}</td>
+        <td>${nextPlan}</td>
+        <td>${t.data_to_move_bytes > 0 ? fmt(t.data_to_move_bytes) : '<span style="color:var(--accent-green)">0 (passt rein)</span>'}</td>
+        <td>${fmt(t.truenas_free_bytes)}</td>
+        <td>${statusBadge}</td>
+      </tr>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <table class="threshold-table">
+      <thead>
+        <tr>
+          <th>Storagebox</th>
+          <th>Aktueller Plan</th>
+          <th>Belegt</th>
+          <th>Nächst kleinerer Plan</th>
+          <th>Zu verschieben</th>
+          <th>TrueNAS frei</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function refresh() {
+  await Promise.all([loadTruenas(), loadHetzner(), loadCombined()]);
+  const now = new Date().toLocaleTimeString('de-DE');
+  document.getElementById('refreshIndicator').textContent = `Aktualisiert: ${now}`;
+}
+
+// Range buttons
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentDays = parseInt(btn.dataset.days);
+    refresh();
+  });
+});
+
+// Manual collect
+document.getElementById('collectBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('collectBtn');
+  btn.textContent = '⏳ Sammle…';
+  btn.disabled = true;
+  try {
+    await fetch('/api/collect', { method: 'POST' });
+    await refresh();
+  } finally {
+    btn.textContent = '▶ Jetzt sammeln';
+    btn.disabled = false;
+  }
+});
+
+// Auto-refresh every 5 minutes
+setInterval(refresh, 5 * 60 * 1000);
+
+initCharts();
+refresh();
+</script>
+</body>
+</html>
