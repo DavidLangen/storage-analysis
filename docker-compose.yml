@@ -2,7 +2,7 @@ services:
   storage-analysis:
     build: .
     ports:
-      - "8000:8000"
+      - "${WEB_PORT:-8000}:8000"
     volumes:
       - ./data:/data
     env_file: .env

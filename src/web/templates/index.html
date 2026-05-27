@@ -228,10 +228,10 @@
 <header>
   <h1>Storage <span>Analysis</span></h1>
   <div class="controls">
-    <button class="range-btn active" data-days="7">7T</button>
-    <button class="range-btn" data-days="30">30T</button>
-    <button class="range-btn" data-days="90">90T</button>
-    <button class="collect-btn" id="collectBtn">▶ Jetzt sammeln</button>
+    <button class="range-btn active" data-days="7">7d</button>
+    <button class="range-btn" data-days="30">30d</button>
+    <button class="range-btn" data-days="90">90d</button>
+    <button class="collect-btn" id="collectBtn">▶ Collect now</button>
     <span class="refresh-indicator" id="refreshIndicator">–</span>
   </div>
 </header>
@@ -241,31 +241,31 @@
   <!-- Combined stats -->
   <div class="stats-grid" id="statsGrid">
     <div class="stat-card">
-      <div class="label">Gesamt-Kapazität</div>
+      <div class="label">Total Capacity</div>
       <div class="value color-blue" id="statTotal">–</div>
       <div class="sub">Hetzner + TrueNAS</div>
     </div>
     <div class="stat-card">
-      <div class="label">Belegt</div>
+      <div class="label">Used</div>
       <div class="value color-orange" id="statUsed">–</div>
       <div class="sub" id="statUsedPct">–</div>
       <div class="progress-bar-wrap"><div class="progress-bar bar-orange" id="barUsed" style="width:0%"></div></div>
     </div>
     <div class="stat-card">
-      <div class="label">Frei</div>
+      <div class="label">Free</div>
       <div class="value color-green" id="statFree">–</div>
       <div class="sub" id="statFreePct">–</div>
       <div class="progress-bar-wrap"><div class="progress-bar bar-green" id="barFree" style="width:0%"></div></div>
     </div>
     <div class="stat-card">
-      <div class="label">Hetzner belegt</div>
+      <div class="label">Hetzner Used</div>
       <div class="value color-blue" id="statHetzner">–</div>
       <div class="sub" id="statHetznerPct">–</div>
       <div class="progress-bar-wrap"><div class="progress-bar bar-blue" id="barHetzner" style="width:0%"></div></div>
     </div>
     <div class="stat-card">
-      <div class="label">TrueNAS belegt</div>
-      <div class="value color-purple" id="statTruenas" style="color:var(--accent-purple)">–</div>
+      <div class="label">TrueNAS Used</div>
+      <div class="value" id="statTruenas" style="color:var(--accent-purple)">–</div>
       <div class="sub" id="statTruenasPct">–</div>
       <div class="progress-bar-wrap"><div class="progress-bar" id="barTruenas" style="width:0%;background:var(--accent-purple)"></div></div>
     </div>
@@ -274,27 +274,29 @@
   <!-- Charts -->
   <div class="charts-grid">
     <div class="card">
-      <div class="card-title">TrueNAS — Verlauf</div>
+      <div class="card-title">TrueNAS — History</div>
       <div class="chart-wrap"><canvas id="truenasChart"></canvas></div>
     </div>
     <div class="card">
-      <div class="card-title">Hetzner Storagebox — Verlauf</div>
+      <div class="card-title">Hetzner Storagebox — History</div>
       <div class="chart-wrap"><canvas id="hetznerChart"></canvas></div>
     </div>
   </div>
 
   <!-- Downscale thresholds -->
   <div class="card">
-    <div class="card-title">Hetzner Downscale-Thresholds</div>
+    <div class="card-title">Hetzner Downscale Thresholds</div>
     <div id="thresholdContent">
-      <div class="empty-state">Lade Daten…</div>
+      <div class="empty-state">Loading data…</div>
     </div>
   </div>
 
 </main>
 
 <script>
-const fmt = (bytes) => {
+// ── Formatters ────────────────────────────────────────────────────────────────
+
+function fmt(bytes) {
   if (bytes === null || bytes === undefined) return '–';
   const tb = bytes / 1e12;
   if (tb >= 1) return tb.toFixed(2) + ' TB';
@@ -302,60 +304,83 @@ const fmt = (bytes) => {
   if (gb >= 1) return gb.toFixed(1) + ' GB';
   const mb = bytes / 1e6;
   return mb.toFixed(0) + ' MB';
-};
+}
 
-const pct = (used, total) => total > 0 ? ((used / total) * 100).toFixed(1) + '%' : '–';
+function pct(used, total) {
+  return total > 0 ? ((used / total) * 100).toFixed(1) + '%' : '–';
+}
 
-const CHART_DEFAULTS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { labels: { color: '#8892a4', boxWidth: 12, padding: 16 } },
-    tooltip: {
-      backgroundColor: '#1a1d2e',
-      borderColor: '#2e3150',
-      borderWidth: 1,
-      titleColor: '#e2e8f0',
-      bodyColor: '#8892a4',
-      callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
-    }
-  },
-  scales: {
-    x: {
-      type: 'time',
-      time: { tooltipFormat: 'dd.MM.yy HH:mm' },
-      grid: { color: '#2e3150' },
-      ticks: { color: '#8892a4' }
+// ── Shared chart options factory ──────────────────────────────────────────────
+// NOTE: Chart.js options must NOT be cloned with JSON.parse/stringify —
+// that drops all callback functions. Use a factory instead.
+
+function makeChartOpts() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: {
+        labels: { color: '#8892a4', boxWidth: 12, padding: 16, font: { size: 11 } }
+      },
+      tooltip: {
+        backgroundColor: '#1a1d2e',
+        borderColor: '#2e3150',
+        borderWidth: 1,
+        titleColor: '#e2e8f0',
+        bodyColor: '#8892a4',
+        callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` }
+      }
     },
-    y: {
-      grid: { color: '#2e3150' },
-      ticks: { color: '#8892a4', callback: v => fmt(v) }
+    scales: {
+      x: {
+        type: 'time',
+        time: { tooltipFormat: 'dd.MM.yy HH:mm' },
+        grid: { color: '#2e3150' },
+        ticks: {
+          color: '#8892a4',
+          font: { size: 11 },
+          maxTicksLimit: 8,
+        }
+      },
+      y: {
+        grid: { color: '#2e3150' },
+        ticks: {
+          color: '#8892a4',
+          font: { size: 11 },
+          callback: v => fmt(v),
+        }
+      }
     }
-  }
-};
+  };
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
 
 let truenasChart, hetznerChart;
 let currentDays = 7;
+
+function parseTS(ts) {
+  if (ts && !ts.endsWith('Z') && !ts.includes('+')) ts += 'Z';
+  return new Date(ts);
+}
+
+// ── Chart init ────────────────────────────────────────────────────────────────
 
 function initCharts() {
   truenasChart = new Chart(document.getElementById('truenasChart'), {
     type: 'line',
     data: { datasets: [] },
-    options: JSON.parse(JSON.stringify(CHART_DEFAULTS))
+    options: makeChartOpts(),
   });
   hetznerChart = new Chart(document.getElementById('hetznerChart'), {
     type: 'line',
     data: { datasets: [] },
-    options: JSON.parse(JSON.stringify(CHART_DEFAULTS))
+    options: makeChartOpts(),
   });
 }
 
-function parseTS(ts) {
-  // normalize ISO strings from SQLite (may lack timezone suffix)
-  if (ts && !ts.endsWith('Z') && !ts.includes('+')) ts += 'Z';
-  return new Date(ts);
-}
+// ── TrueNAS chart ─────────────────────────────────────────────────────────────
 
 async function loadTruenas() {
   const names = await fetch('/api/truenas/pools').then(r => r.json());
@@ -373,7 +398,7 @@ async function loadTruenas() {
     const color = colors[i % colors.length];
     datasets.push(
       {
-        label: `${name} belegt`,
+        label: `${name} used`,
         data: data.map(d => ({ x: parseTS(d.timestamp), y: d.allocated })),
         borderColor: color,
         backgroundColor: color + '22',
@@ -382,7 +407,7 @@ async function loadTruenas() {
         pointRadius: 2,
       },
       {
-        label: `${name} frei`,
+        label: `${name} free`,
         data: data.map(d => ({ x: parseTS(d.timestamp), y: d.free })),
         borderColor: '#34d399',
         backgroundColor: '#34d39922',
@@ -398,73 +423,117 @@ async function loadTruenas() {
   truenasChart.update();
 }
 
+// ── Hetzner chart (with downgrade threshold line) ─────────────────────────────
+
 async function loadHetzner() {
-  const ids = await fetch('/api/hetzner/ids').then(r => r.json());
+  const [ids, combined] = await Promise.all([
+    fetch('/api/hetzner/ids').then(r => r.json()),
+    fetch('/api/combined').then(r => r.json()),
+  ]);
+
   if (!ids.length) {
     hetznerChart.data.datasets = [];
     hetznerChart.update();
     return;
   }
 
+  // Build a threshold lookup: storagebox_id → threshold info
+  const thresholdMap = {};
+  (combined.downscale_thresholds || []).forEach(t => {
+    thresholdMap[t.storagebox_id] = t;
+  });
+
   const colors = ['#4f8ef7', '#fb923c', '#f87171', '#fbbf24'];
   const datasets = [];
+
+  // Time window for annotation lines
+  const now = Date.now();
+  const rangeStart = new Date(now - currentDays * 86400000);
+  const rangeEnd   = new Date(now);
 
   await Promise.all(ids.map(async (id, i) => {
     const data = await fetch(`/api/hetzner/history?storagebox_id=${id}&days=${currentDays}`).then(r => r.json());
     if (!data.length) return;
+
     const color = colors[i % colors.length];
-    const name = data[0].name || `Box ${id}`;
-    datasets.push(
-      {
-        label: `${name} belegt`,
-        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_usage })),
-        borderColor: color,
-        backgroundColor: color + '22',
-        fill: true,
-        tension: 0.3,
-        pointRadius: 2,
-      },
-      {
-        label: `${name} Kontingent`,
-        data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_quota })),
-        borderColor: color,
+    const name  = data[0].name || `Box ${id}`;
+
+    // Used bytes line
+    datasets.push({
+      label: `${name} used`,
+      data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_usage })),
+      borderColor: color,
+      backgroundColor: color + '22',
+      fill: true,
+      tension: 0.3,
+      pointRadius: 2,
+    });
+
+    // Quota ceiling line (dashed)
+    datasets.push({
+      label: `${name} quota`,
+      data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_quota })),
+      borderColor: color,
+      backgroundColor: 'transparent',
+      borderDash: [6, 3],
+      fill: false,
+      tension: 0,
+      pointRadius: 0,
+    });
+
+    // Downgrade threshold line — shows where the next smaller plan ends
+    const threshold = thresholdMap[id];
+    if (threshold && threshold.next_smaller_quota_bytes) {
+      const thresholdY = threshold.next_smaller_quota_bytes;
+      const label      = `${threshold.next_smaller_product || 'Next plan'} limit (${fmt(thresholdY)})`;
+      datasets.push({
+        label,
+        data: [
+          { x: rangeStart, y: thresholdY },
+          { x: rangeEnd,   y: thresholdY },
+        ],
+        borderColor: '#f87171',
         backgroundColor: 'transparent',
-        borderDash: [6, 3],
+        borderDash: [10, 5],
+        borderWidth: 2,
         fill: false,
         tension: 0,
         pointRadius: 0,
-      }
-    );
+        // Exclude from tooltip unless hovered directly
+        order: -1,
+      });
+    }
   }));
 
   hetznerChart.data.datasets = datasets;
   hetznerChart.update();
 }
 
+// ── Combined stats + threshold table ─────────────────────────────────────────
+
 async function loadCombined() {
   const data = await fetch('/api/combined').then(r => r.json());
 
   document.getElementById('statTotal').textContent = fmt(data.total_quota_bytes);
-  document.getElementById('statUsed').textContent = fmt(data.total_used_bytes);
-  document.getElementById('statUsedPct').textContent = pct(data.total_used_bytes, data.total_quota_bytes) + ' belegt';
-  document.getElementById('statFree').textContent = fmt(data.total_free_bytes);
-  document.getElementById('statFreePct').textContent = pct(data.total_free_bytes, data.total_quota_bytes) + ' frei';
+  document.getElementById('statUsed').textContent  = fmt(data.total_used_bytes);
+  document.getElementById('statUsedPct').textContent = pct(data.total_used_bytes, data.total_quota_bytes) + ' used';
+  document.getElementById('statFree').textContent  = fmt(data.total_free_bytes);
+  document.getElementById('statFreePct').textContent = pct(data.total_free_bytes, data.total_quota_bytes) + ' free';
 
   const usedPct = data.total_quota_bytes > 0 ? (data.total_used_bytes / data.total_quota_bytes * 100) : 0;
-  const freePct = 100 - usedPct;
   document.getElementById('barUsed').style.width = usedPct + '%';
-  document.getElementById('barFree').style.width = freePct + '%';
+  document.getElementById('barFree').style.width = (100 - usedPct) + '%';
 
-  const hetznerUsed = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_usage, 0);
+  const hetznerUsed  = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_usage, 0);
   const hetznerQuota = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_quota, 0);
-  document.getElementById('statHetzner').textContent = fmt(hetznerUsed);
-  document.getElementById('statHetznerPct').textContent = pct(hetznerUsed, hetznerQuota) + ' von ' + fmt(hetznerQuota);
+  document.getElementById('statHetzner').textContent    = fmt(hetznerUsed);
+  document.getElementById('statHetznerPct').textContent = pct(hetznerUsed, hetznerQuota) + ' of ' + fmt(hetznerQuota);
   document.getElementById('barHetzner').style.width = (hetznerQuota > 0 ? hetznerUsed / hetznerQuota * 100 : 0) + '%';
 
   const tnAlloc = data.truenas_pools.reduce((s, p) => s + p.allocated, 0);
-  const tnSize = data.truenas_pools.reduce((s, p) => s + p.size, 0);
-  document.getElementById('statTruenas').textContent = fmt(tnAlloc);
-  document.getElementById('statTruenasPct').textContent = pct(tnAlloc, tnSize) + ' von ' + fmt(tnSize);
+  const tnSize  = data.truenas_pools.reduce((s, p) => s + p.size,      0);
+  document.getElementById('statTruenas').textContent    = fmt(tnAlloc);
+  document.getElementById('statTruenasPct').textContent = pct(tnAlloc, tnSize) + ' of ' + fmt(tnSize);
   document.getElementById('barTruenas').style.width = (tnSize > 0 ? tnAlloc / tnSize * 100 : 0) + '%';
 
   renderThresholds(data.downscale_thresholds);
@@ -473,25 +542,29 @@ async function loadCombined() {
 function renderThresholds(thresholds) {
   const el = document.getElementById('thresholdContent');
   if (!thresholds.length) {
-    el.innerHTML = '<div class="empty-state">Keine Daten vorhanden. Bitte erst Daten sammeln.</div>';
+    el.innerHTML = '<div class="empty-state">No data yet — click "Collect now" to fetch the first snapshot.</div>';
     return;
   }
 
   const rows = thresholds.map(t => {
     let statusBadge;
     if (!t.next_smaller_product) {
-      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>Kleinster Plan</span>';
+      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>Smallest plan</span>';
     } else if (t.can_downscale && t.threshold_met) {
-      statusBadge = '<span class="badge badge-green"><span class="dot dot-green"></span>Downscale möglich</span>';
+      statusBadge = '<span class="badge badge-green"><span class="dot dot-green"></span>Downscale possible</span>';
     } else if (!t.can_downscale && t.threshold_met) {
-      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>TrueNAS hat Platz</span>';
+      statusBadge = '<span class="badge badge-orange"><span class="dot dot-orange"></span>TrueNAS has space</span>';
     } else {
-      statusBadge = '<span class="badge badge-red"><span class="dot dot-red"></span>Kein Downscale</span>';
+      statusBadge = '<span class="badge badge-red"><span class="dot dot-red"></span>Cannot downscale</span>';
     }
 
     const nextPlan = t.next_smaller_product
-      ? `${t.next_smaller_product} (${fmt(t.next_smaller_quota_bytes)})`
+      ? `${t.next_smaller_product} <span style="color:var(--text-muted)">(${fmt(t.next_smaller_quota_bytes)})</span>`
       : '–';
+
+    const toMove = t.data_to_move_bytes > 0
+      ? fmt(t.data_to_move_bytes)
+      : '<span style="color:var(--accent-green)">0 (fits as-is)</span>';
 
     return `
       <tr>
@@ -499,7 +572,7 @@ function renderThresholds(thresholds) {
         <td>${t.current_product} <span style="color:var(--text-muted)">(${fmt(t.current_quota_bytes)})</span></td>
         <td>${fmt(t.disk_used_bytes)}</td>
         <td>${nextPlan}</td>
-        <td>${t.data_to_move_bytes > 0 ? fmt(t.data_to_move_bytes) : '<span style="color:var(--accent-green)">0 (passt rein)</span>'}</td>
+        <td>${toMove}</td>
         <td>${fmt(t.truenas_free_bytes)}</td>
         <td>${statusBadge}</td>
       </tr>
@@ -511,11 +584,11 @@ function renderThresholds(thresholds) {
       <thead>
         <tr>
           <th>Storagebox</th>
-          <th>Aktueller Plan</th>
-          <th>Belegt</th>
-          <th>Nächst kleinerer Plan</th>
-          <th>Zu verschieben</th>
-          <th>TrueNAS frei</th>
+          <th>Current Plan</th>
+          <th>Used</th>
+          <th>Next Smaller Plan</th>
+          <th>To Move</th>
+          <th>TrueNAS Free</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -524,13 +597,16 @@ function renderThresholds(thresholds) {
   `;
 }
 
+// ── Refresh ───────────────────────────────────────────────────────────────────
+
 async function refresh() {
   await Promise.all([loadTruenas(), loadHetzner(), loadCombined()]);
-  const now = new Date().toLocaleTimeString('de-DE');
-  document.getElementById('refreshIndicator').textContent = `Aktualisiert: ${now}`;
+  const now = new Date().toLocaleTimeString();
+  document.getElementById('refreshIndicator').textContent = `Updated: ${now}`;
 }
 
-// Range buttons
+// ── Event listeners ───────────────────────────────────────────────────────────
+
 document.querySelectorAll('.range-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
@@ -540,16 +616,15 @@ document.querySelectorAll('.range-btn').forEach(btn => {
   });
 });
 
-// Manual collect
 document.getElementById('collectBtn').addEventListener('click', async () => {
   const btn = document.getElementById('collectBtn');
-  btn.textContent = '⏳ Sammle…';
+  btn.textContent = '⏳ Collecting…';
   btn.disabled = true;
   try {
     await fetch('/api/collect', { method: 'POST' });
     await refresh();
   } finally {
-    btn.textContent = '▶ Jetzt sammeln';
+    btn.textContent = '▶ Collect now';
     btn.disabled = false;
   }
 });
