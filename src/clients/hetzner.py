@@ -55,12 +55,15 @@ class HetznerClient:
             total = int(parts[1])
             used = int(parts[2])
             product = self._product_override or _detect_product(total)
+            # Use the canonical plan size as quota — df returns binary TiB which
+            # is ~10% larger than the decimal TB Hetzner advertises (10 TiB ≈ 11 TB).
+            plan_quota = next((size for name, size in HETZNER_PLANS if name == product), total)
             return StorageBox(
                 id=0,
                 login=self._username,
                 name=self._host,
                 product=product,
-                disk_quota=total,
+                disk_quota=plan_quota,
                 disk_usage=used,
             )
         finally:

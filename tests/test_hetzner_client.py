@@ -72,7 +72,8 @@ async def test_get_storageboxes_returns_single_box(client):
     assert len(boxes) == 1
     box = boxes[0]
     assert box.login == "u123"
-    assert box.disk_quota == total
+    # disk_quota is the canonical plan size (BX31 = 10 TB), not the raw df total
+    assert box.disk_quota == 10_000_000_000_000
     assert box.disk_usage == used
 
 
@@ -99,13 +100,16 @@ async def test_get_storageboxes_product_override():
 
 
 async def test_get_storageboxes_used_equals_df_used(client):
-    total = 10_000_000_000_000
+    # df may return binary TiB total, but used bytes are taken as-is
+    total = 10_995_116_277_760  # 10 TiB — what df actually reports for a BX31
     used = 2_800_000_000_000
     ssh_patch, _ = _patch_ssh(total, used)
     with ssh_patch:
         boxes = await client.get_storageboxes()
 
     assert boxes[0].disk_usage == used
+    # quota is normalised to the canonical plan size, not the raw df total
+    assert boxes[0].disk_quota == 10_000_000_000_000
 
 
 async def test_get_storagebox_returns_first_box(client):

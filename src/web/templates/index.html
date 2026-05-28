@@ -344,6 +344,7 @@ function makeChartOpts() {
         }
       },
       y: {
+        min: 0,
         grid: { color: '#2e3150' },
         ticks: {
           color: '#8892a4',
@@ -382,10 +383,11 @@ function initCharts() {
 
 // ── TrueNAS chart ─────────────────────────────────────────────────────────────
 
-async function loadTruenas() {
+async function loadTruenas(maxY) {
   const names = await fetch('/api/truenas/pools').then(r => r.json());
   if (!names.length) {
     truenasChart.data.datasets = [];
+    truenasChart.options.scales.y.max = undefined;
     truenasChart.update();
     return;
   }
@@ -419,20 +421,19 @@ async function loadTruenas() {
     );
   }));
 
+  truenasChart.options.scales.y.max = maxY || undefined;
   truenasChart.data.datasets = datasets;
   truenasChart.update();
 }
 
-// ── Hetzner chart (with downgrade threshold line) ─────────────────────────────
+// ── Hetzner chart (used + free areas + downgrade threshold line) ──────────────
 
-async function loadHetzner() {
-  const [ids, combined] = await Promise.all([
-    fetch('/api/hetzner/ids').then(r => r.json()),
-    fetch('/api/combined').then(r => r.json()),
-  ]);
+async function loadHetzner(combined, maxY) {
+  const ids = await fetch('/api/hetzner/ids').then(r => r.json());
 
   if (!ids.length) {
     hetznerChart.data.datasets = [];
+    hetznerChart.options.scales.y.max = undefined;
     hetznerChart.update();
     return;
   }
@@ -443,54 +444,61 @@ async function loadHetzner() {
     thresholdMap[t.storagebox_id] = t;
   });
 
-  const colors = ['#4f8ef7', '#fb923c', '#f87171', '#fbbf24'];
+  const colors = ['#4f8ef7', '#fb923c', '#fbbf24', '#a78bfa'];
   const datasets = [];
 
-  // Time window for annotation lines
-  const now = Date.now();
-  const rangeStart = new Date(now - currentDays * 86400000);
-  const rangeEnd   = new Date(now);
+  // Fetch all histories in order so dataset indices are predictable for fill: '-1'
+  const histories = await Promise.all(
+    ids.map(id => fetch(`/api/hetzner/history?storagebox_id=${id}&days=${currentDays}`).then(r => r.json()))
+  );
 
-  await Promise.all(ids.map(async (id, i) => {
-    const data = await fetch(`/api/hetzner/history?storagebox_id=${id}&days=${currentDays}`).then(r => r.json());
+  ids.forEach((id, i) => {
+    const data = histories[i];
     if (!data.length) return;
 
     const color = colors[i % colors.length];
     const name  = data[0].name || `Box ${id}`;
 
-    // Used bytes line
+    // Used: solid fill from baseline (y = 0)
     datasets.push({
       label: `${name} used`,
       data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_usage })),
       borderColor: color,
-      backgroundColor: color + '22',
-      fill: true,
+      backgroundColor: color + '44',
+      fill: 'origin',
       tension: 0.3,
       pointRadius: 2,
+      order: 2,
     });
 
-    // Quota ceiling line (dashed)
+    // Free: fills the gap between the "used" line and the quota ceiling
+    // fill: '-1' paints between this dataset and the previous one (used)
     datasets.push({
-      label: `${name} quota`,
+      label: `${name} free`,
       data: data.map(d => ({ x: parseTS(d.timestamp), y: d.disk_quota })),
-      borderColor: color,
-      backgroundColor: 'transparent',
-      borderDash: [6, 3],
-      fill: false,
-      tension: 0,
+      borderColor: color + '66',
+      backgroundColor: '#34d39922',
+      fill: '-1',
+      borderDash: [4, 3],
+      tension: 0.3,
       pointRadius: 0,
+      order: 2,
     });
 
-    // Downgrade threshold line — shows where the next smaller plan ends
+    // Downgrade threshold line — spans exactly the same time range as the data
+    // so the x-axis is not stretched beyond what the history points cover
     const threshold = thresholdMap[id];
     if (threshold && threshold.next_smaller_quota_bytes) {
-      const thresholdY = threshold.next_smaller_quota_bytes;
-      const label      = `${threshold.next_smaller_product || 'Next plan'} limit (${fmt(thresholdY)})`;
+      const thresholdY  = threshold.next_smaller_quota_bytes;
+      const label       = `${threshold.next_smaller_product || 'Next plan'} limit (${fmt(thresholdY)})`;
+      const tsList      = data.map(d => parseTS(d.timestamp).getTime());
+      const dataStart   = new Date(Math.min(...tsList));
+      const dataEnd     = new Date(Math.max(...tsList));
       datasets.push({
         label,
         data: [
-          { x: rangeStart, y: thresholdY },
-          { x: rangeEnd,   y: thresholdY },
+          { x: dataStart, y: thresholdY },
+          { x: dataEnd,   y: thresholdY },
         ],
         borderColor: '#f87171',
         backgroundColor: 'transparent',
@@ -499,44 +507,42 @@ async function loadHetzner() {
         fill: false,
         tension: 0,
         pointRadius: 0,
-        // Exclude from tooltip unless hovered directly
-        order: -1,
+        order: 1,
       });
     }
-  }));
+  });
 
+  hetznerChart.options.scales.y.max = maxY || undefined;
   hetznerChart.data.datasets = datasets;
   hetznerChart.update();
 }
 
 // ── Combined stats + threshold table ─────────────────────────────────────────
 
-async function loadCombined() {
-  const data = await fetch('/api/combined').then(r => r.json());
+function updateStats(combined) {
+  document.getElementById('statTotal').textContent = fmt(combined.total_quota_bytes);
+  document.getElementById('statUsed').textContent  = fmt(combined.total_used_bytes);
+  document.getElementById('statUsedPct').textContent = pct(combined.total_used_bytes, combined.total_quota_bytes) + ' used';
+  document.getElementById('statFree').textContent  = fmt(combined.total_free_bytes);
+  document.getElementById('statFreePct').textContent = pct(combined.total_free_bytes, combined.total_quota_bytes) + ' free';
 
-  document.getElementById('statTotal').textContent = fmt(data.total_quota_bytes);
-  document.getElementById('statUsed').textContent  = fmt(data.total_used_bytes);
-  document.getElementById('statUsedPct').textContent = pct(data.total_used_bytes, data.total_quota_bytes) + ' used';
-  document.getElementById('statFree').textContent  = fmt(data.total_free_bytes);
-  document.getElementById('statFreePct').textContent = pct(data.total_free_bytes, data.total_quota_bytes) + ' free';
-
-  const usedPct = data.total_quota_bytes > 0 ? (data.total_used_bytes / data.total_quota_bytes * 100) : 0;
+  const usedPct = combined.total_quota_bytes > 0 ? (combined.total_used_bytes / combined.total_quota_bytes * 100) : 0;
   document.getElementById('barUsed').style.width = usedPct + '%';
   document.getElementById('barFree').style.width = (100 - usedPct) + '%';
 
-  const hetznerUsed  = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_usage, 0);
-  const hetznerQuota = data.hetzner_storageboxes.reduce((s, b) => s + b.disk_quota, 0);
+  const hetznerUsed  = combined.hetzner_storageboxes.reduce((s, b) => s + b.disk_usage, 0);
+  const hetznerQuota = combined.hetzner_storageboxes.reduce((s, b) => s + b.disk_quota, 0);
   document.getElementById('statHetzner').textContent    = fmt(hetznerUsed);
   document.getElementById('statHetznerPct').textContent = pct(hetznerUsed, hetznerQuota) + ' of ' + fmt(hetznerQuota);
   document.getElementById('barHetzner').style.width = (hetznerQuota > 0 ? hetznerUsed / hetznerQuota * 100 : 0) + '%';
 
-  const tnAlloc = data.truenas_pools.reduce((s, p) => s + p.allocated, 0);
-  const tnSize  = data.truenas_pools.reduce((s, p) => s + p.size,      0);
+  const tnAlloc = combined.truenas_pools.reduce((s, p) => s + p.allocated, 0);
+  const tnSize  = combined.truenas_pools.reduce((s, p) => s + p.size,      0);
   document.getElementById('statTruenas').textContent    = fmt(tnAlloc);
   document.getElementById('statTruenasPct').textContent = pct(tnAlloc, tnSize) + ' of ' + fmt(tnSize);
   document.getElementById('barTruenas').style.width = (tnSize > 0 ? tnAlloc / tnSize * 100 : 0) + '%';
 
-  renderThresholds(data.downscale_thresholds);
+  renderThresholds(combined.downscale_thresholds);
 }
 
 function renderThresholds(thresholds) {
@@ -600,7 +606,17 @@ function renderThresholds(thresholds) {
 // ── Refresh ───────────────────────────────────────────────────────────────────
 
 async function refresh() {
-  await Promise.all([loadTruenas(), loadHetzner(), loadCombined()]);
+  // Single fetch shared across all consumers — avoids redundant round-trips
+  const combined = await fetch('/api/combined').then(r => r.json());
+
+  // Unified Y-axis: both charts use the larger of the two total capacities
+  const hetznerMax = combined.hetzner_storageboxes.reduce((s, b) => s + b.disk_quota, 0);
+  const truenasMax = combined.truenas_pools.reduce((s, p) => s + p.size, 0);
+  const unifiedMax = Math.max(hetznerMax, truenasMax) || undefined;
+
+  await Promise.all([loadTruenas(unifiedMax), loadHetzner(combined, unifiedMax)]);
+  updateStats(combined);
+
   const now = new Date().toLocaleTimeString();
   document.getElementById('refreshIndicator').textContent = `Updated: ${now}`;
 }
